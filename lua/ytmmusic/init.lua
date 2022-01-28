@@ -1,127 +1,143 @@
 local Job = require("plenary.job")
 
-local yt = {}
-local auth = "" -- ytmdesktop -setting integreation password should be there
-
-local makeReq = function(url)
-  local req = Job
-    :new({
-      command = "curl",
-      args = { url },
-    })
-    :sync()
-  return vim.json.decode(req[1] or "")
+local function get_line(filename, line_number)
+  local i = 0
+  for line in io.lines(filename) do
+    i = i + 1
+    if i == line_number then
+      return line
+    end
+  end
+  return nil -- line not found
 end
 
-local sendReq = function(command, url)
-  Job
-    :new({
-      command = "curl",
-      args = {
-        "-H",
-        "Authorization: Bearer " .. auth,
-        "-X",
-        "POST",
-        "-d",
-        command,
-        url,
-      },
-    })
-    :sync()
+local function read_auth_file(path)
+	local auth = get_line(path, 1)
+  if not auth then
+		vim.notify(
+			[[
+ytmmusic.lua: Auth file not found.
+You will need to add your ytmdesktop integration password in ~/.config/nvim/ytmmusic_auth file.
+Please create auth file and then continue]],
+			vim.log.levels.ERROR
+		)
+		return nil
+	end
+    return auth
+end
+
+local yt = {}
+local auth = read_auth_file(vim.fn.stdpath("config") .. "/ytmmusic_auth")
+-- ytmdesktop -setting integreation password should be there
+
+local makeReq = function(url)
+	local req = Job
+		:new({
+			command = "curl",
+			args = { url },
+		})
+		:sync()
+	return vim.json.decode(req[1] or "")
+end
+
+yt.parseCommand = function(command)
+  local cmd = string.format([[silent !curl -H "Authorization: Bearer %s" -X POST -d '{"command": "%s"}' http://localhost:9863/query]], auth, command)
+  vim.cmd(cmd)
 end
 
 local rounder = function(num, places)
-  local mult = 10 ^ (places or 0)
-  return (math.floor(num * mult + 0.5) / mult) * 100
+	local mult = 10 ^ (places or 0)
+	return (math.floor(num * mult + 0.5) / mult) * 100
 end
 
 yt.getCurrentStats = function()
-  local currentStats = makeReq("http://localhost:9863/query")
-  return currentStats
+	local currentStats = makeReq("http://localhost:9863/query")
+	return currentStats
 end
 
-yt.notifycurrentstats = function()
-  local currentStats = yt.getCurrentStats()
-
-  vim.notify(
-    string.format(
-      "Currently Playing: %s\nArtist: %s\nPercentage %s%s of %s",
-      currentStats.track.title,
-      currentStats.track.author,
-      rounder(currentStats.player.statePercent, 3),
-      "%",
-      currentStats.track.durationHuman
-    )
-  )
+yt.notifyCurrentStats = function()
+	local currentStats = yt.getCurrentStats()
+  
+  local message = string.format(
+			[[
+Currently Playing: %s
+Artist: %s
+Percentage %s%s of %s
+Current Position: %s]],
+			currentStats.track.title,
+			currentStats.track.author,
+			rounder(currentStats.player.statePercent, 3),
+			"%",
+			currentStats.track.durationHuman,
+      currentStats.player.seekbarCurrentPositionHuman
+		)
+  if currentStats.player.isPaused then
+    message = message:gsub("Currently Playing", "Currently Paused")
+  end
+  vim.notify(message, vim.log.levels.INFO)
 end
 
 yt.getNthStats = function(prev_or_next)
-  local returnStats = makeReq("http://localhost:9863/query/queue")
+	local returnStats = makeReq("http://localhost:9863/query/queue")
 
-  -- Index 0 = previous track , 1 == current 2 == next
-  local currentIndex = returnStats.currentIndex + prev_or_next
-  local trackCover
-  local trackTitle
-  local trackAuthor
-  local trackDuration
+	-- Index 0 = previous track , 1 == current 2 == next
+	local currentIndex = returnStats.currentIndex + prev_or_next
+	local trackCover
+	local trackTitle
+	local trackAuthor
+	local trackDuration
 
-  local indexedValue = returnStats.list[currentIndex]
+	local indexedValue = returnStats.list[currentIndex]
 
-  for k, v in pairs(indexedValue) do
-    if k == "cover" then
-      trackCover = v
-    elseif k == "title" then
-      trackTitle = v
-    elseif k == "author" then
-      trackAuthor = v
-    elseif k == "duration" then
-      trackDuration = v
-    end
-  end
+	for k, v in pairs(indexedValue) do
+		if k == "cover" then
+			trackCover = v
+		elseif k == "title" then
+			trackTitle = v
+		elseif k == "author" then
+			trackAuthor = v
+		elseif k == "duration" then
+			trackDuration = v
+		end
+	end
 
-  return {
-    currentIndex = currentIndex,
-    trackCover = trackCover,
-    trackTitle = trackTitle,
-    trackAuthor = trackAuthor,
-    trackDuration = trackDuration,
-  }
+	return {
+		currentIndex = currentIndex,
+		trackCover = trackCover,
+		trackTitle = trackTitle,
+		trackAuthor = trackAuthor,
+		trackDuration = trackDuration,
+	}
 end
 
-yt.notifynextstats = function()
-  local nextStats = yt.getNthStats(2)
+yt.notifyNextStats = function()
+	local nextStats = yt.getNthStats(2)
 
-  vim.notify(
-    string.format(
-      "Next Track: %s\nArtist: %s\nDuration: %s",
-      nextStats.trackTitle,
-      nextStats.trackAuthor,
-      nextStats.trackDuration
-    )
-  )
+	vim.notify(
+		string.format(
+			"Next Track: %s\nArtist: %s\nDuration: %s",
+			nextStats.trackTitle,
+			nextStats.trackAuthor,
+			nextStats.trackDuration
+		)
+	)
 end
 
-yt.notifyprevstats = function()
-  local nextStats = yt.getNthStats(0)
+yt.notifyPrevStats = function()
+	local nextStats = yt.getNthStats(0)
 
-  vim.notify(
-    string.format(
-      "Prev Track was: %s\nArtist: %s\nDuration: %s",
-      nextStats.trackTitle,
-      nextStats.trackAuthor,
-      nextStats.trackDuration
-    )
-  )
-end
-
-yt.parseCommand = function(controlCommand)
-  local command = '{"command":"' .. controlCommand .. '"}'
-  local url = "http://localhost:9863/query"
-  sendReq(command, url)
+	vim.notify(
+		string.format(
+			"Prev Track was: %s\nArtist: %s\nDuration: %s",
+			nextStats.trackTitle,
+			nextStats.trackAuthor,
+			nextStats.trackDuration
+		)
+	)
 end
 
 yt.test = function()
-  yt.parseCommand("track-pause")
+	yt.parseCommand("track-pause")
 end
 
 return yt
