@@ -40,8 +40,8 @@ local makeReq = function(url)
 	return vim.json.decode(req[1] or "")
 end
 
-yt.parseCommand = function(command)
-  local cmd = string.format([[silent !curl -H "Authorization: Bearer %s" -X POST -d '{"command": "%s"}' http://localhost:9863/query]], auth, command)
+yt.parseCommand = function(command, value)
+  local cmd = string.format([[silent !curl -H "Authorization: Bearer %s" -X POST -d '{"command": "%s", "value": "%s"}' http://localhost:9863/query]], auth, command, value)
   vim.cmd(cmd)
 end
 
@@ -136,8 +136,18 @@ yt.notifyPrevStats = function()
 	)
 end
 
-yt.test = function()
-	yt.parseCommand("track-pause")
+yt.getQueue = function ()
+  local queue = makeReq("http://localhost:9863/query/queue").list
+  local queue_tracks = {}
+  for trackNumber = 1, #queue do
+    table.insert(queue_tracks, string.format("%s by %s", queue[trackNumber].title, queue[trackNumber].author))
+  end
+  return queue_tracks
+end
+
+yt.sendCommand = function (cmd, value)
+  yt.parseCommand(cmd, value)
+  vim.notify(string.format([[ytmmusic.lua: Successfully ran command %s]], cmd))
 end
 
 return yt
